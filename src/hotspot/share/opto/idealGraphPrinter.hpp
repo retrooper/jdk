@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2007, 2023, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -40,6 +40,7 @@ class Matcher;
 class Node;
 class InlineTree;
 class ciMethod;
+class JVMState;
 
 class IdealGraphPrinter : public CHeapObj<mtCompiler> {
  private:
@@ -89,16 +90,22 @@ class IdealGraphPrinter : public CHeapObj<mtCompiler> {
   outputStream *_output;
   ciMethod *_current_method;
   int _depth;
-  char buffer[128];
+  char buffer[512];
   bool _should_send_method;
   PhaseChaitin* _chaitin;
   bool _traverse_outs;
   Compile *C;
   double _max_freq;
+  bool _append;
 
-  void print_method(ciMethod *method, int bci, InlineTree *tree);
-  void print_inline_tree(InlineTree *tree);
-  void visit_node(Node *n, bool edges, VectorSet* temp_set);
+  void print_method(ciMethod* method, int bci, InlineTree* tree);
+  void print_inline_tree(InlineTree* tree);
+  void visit_node(Node* n, bool edges, VectorSet* temp_set);
+  void print_bci_and_line_number(JVMState* caller);
+  void print_field(const Node* node);
+  ciField* get_field(const Node* node);
+  ciField* find_source_field_of_array_access(const Node* node, uint& depth);
+  static Node* get_load_node(const Node* node);
   void walk_nodes(Node *start, bool edges, VectorSet* temp_set);
   void begin_elem(const char *s);
   void end_elem();
@@ -112,13 +119,13 @@ class IdealGraphPrinter : public CHeapObj<mtCompiler> {
   void head(const char *name);
   void text(const char *s);
   void init(const char* file_name, bool use_multiple_files, bool append);
-  void init_file_stream(const char* file_name, bool use_multiple_files, bool append);
+  void init_file_stream(const char* file_name, bool use_multiple_files);
   void init_network_stream();
   IdealGraphPrinter();
   ~IdealGraphPrinter();
 
  public:
-  IdealGraphPrinter(Compile* compile, const char* file_name = NULL, bool append = false);
+  IdealGraphPrinter(Compile* compile, const char* file_name = nullptr, bool append = false);
   static void clean_up();
   static IdealGraphPrinter *printer();
 

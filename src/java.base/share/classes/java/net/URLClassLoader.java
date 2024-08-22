@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2023, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -264,7 +264,7 @@ public class URLClassLoader extends SecureClassLoader implements Closeable {
      * we have to keep a weak reference to each stream.
      */
 
-    private WeakHashMap<Closeable,Void>
+    private final WeakHashMap<Closeable,Void>
         closeables = new WeakHashMap<>();
 
     /**
@@ -427,6 +427,11 @@ public class URLClassLoader extends SecureClassLoader implements Closeable {
                                 return defineClass(name, res);
                             } catch (IOException e) {
                                 throw new ClassNotFoundException(name, e);
+                            } catch (ClassFormatError e2) {
+                                if (res.getDataError() != null) {
+                                    e2.addSuppressed(res.getDataError());
+                                }
+                                throw e2;
                             }
                         } else {
                             return null;
@@ -534,8 +539,6 @@ public class URLClassLoader extends SecureClassLoader implements Closeable {
      * @throws      IllegalArgumentException if the package name is
      *              already defined by this class loader
      * @return      the newly defined {@code Package} object
-     *
-     * @revised 9
      */
     protected Package definePackage(String name, Manifest man, URL url) {
         String specTitle = null, specVersion = null, specVendor = null;

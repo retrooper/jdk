@@ -26,6 +26,7 @@
 package com.sun.imageio.plugins.png;
 
 import java.awt.Rectangle;
+import java.awt.image.BufferedImage;
 import java.awt.image.IndexColorModel;
 import java.awt.image.Raster;
 import java.awt.image.RenderedImage;
@@ -147,7 +148,7 @@ final class ChunkStream extends ImageOutputStreamImpl {
     }
 
     @Override
-    @SuppressWarnings("deprecation")
+    @SuppressWarnings("removal")
     protected void finalize() throws Throwable {
         // Empty finalizer (for improved performance; no need to call
         // super.finalize() in this case)
@@ -284,7 +285,7 @@ final class IDATOutputStream extends ImageOutputStreamImpl {
     }
 
     @Override
-    @SuppressWarnings("deprecation")
+    @SuppressWarnings("removal")
     protected void finalize() throws Throwable {
         // Empty finalizer (for improved performance; no need to call
         // super.finalize() in this case)
@@ -322,7 +323,7 @@ final class PNGImageWriteParam extends ImageWriteParam {
      * <p> The default implementation resets the compression quality
      * to <code>0.5F</code>.
      *
-     * @exception IllegalStateException if the compression mode is not
+     * @throws IllegalStateException if the compression mode is not
      * <code>MODE_EXPLICIT</code>.
      */
     @Override
@@ -919,17 +920,28 @@ public final class PNGImageWriter extends ImageWriter {
 
         int bitDepth = metadata.IHDR_bitDepth;
         for (int row = minY + yOffset; row < minY + height; row += ySkip) {
-            Rectangle rect = new Rectangle(minX, row, width, 1);
-            Raster ras = image.getData(rect);
+            Raster ras;
+            if (image instanceof BufferedImage bi) {
+                // Use the raster directly (no copy).
+                ras = bi.getRaster();
+            } else if (image.getNumXTiles() == 1 && image.getNumYTiles() == 1 &&
+                       image.getTileWidth() == width && image.getTileHeight() == height) {
+                // Use the single tile directly (no copy).
+                ras = image.getTile(image.getMinTileX(), image.getMinTileY());
+            } else {
+                // Make a copy of the raster data.
+                Rectangle rect = new Rectangle(minX, row, width, 1);
+                ras = image.getData(rect);
+            }
+
             if (sourceBands != null) {
-                ras = ras.createChild(minX, row, width, 1, minX, row,
-                                      sourceBands);
+                ras = ras.createChild(minX, row, width, 1, minX, row, sourceBands);
             }
 
             ras.getPixels(minX, row, width, 1, samples);
 
             if (image.getColorModel().isAlphaPremultiplied()) {
-                WritableRaster wr = ras.createCompatibleWritableRaster();
+                WritableRaster wr = ras.createCompatibleWritableRaster(minX, row, width, 1);
                 wr.setPixels(wr.getMinX(), wr.getMinY(),
                              wr.getWidth(), wr.getHeight(),
                              samples);

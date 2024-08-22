@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, 2021, Red Hat, Inc. All rights reserved.
+ * Copyright (c) 2018, 2022, Red Hat, Inc. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -35,7 +35,7 @@
 #include "utilities/defaultStream.hpp"
 
 void ShenandoahArguments::initialize() {
-#if !(defined AARCH64 || defined AMD64 || defined IA32)
+#if !(defined AARCH64 || defined AMD64 || defined IA32 || defined PPC64 || defined RISCV64)
   vm_exit_during_initialization("Shenandoah GC is not supported on this platform.");
 #endif
 
@@ -48,7 +48,6 @@ void ShenandoahArguments::initialize() {
 
   FLAG_SET_DEFAULT(ShenandoahSATBBarrier,            false);
   FLAG_SET_DEFAULT(ShenandoahLoadRefBarrier,         false);
-  FLAG_SET_DEFAULT(ShenandoahIUBarrier,              false);
   FLAG_SET_DEFAULT(ShenandoahCASBarrier,             false);
   FLAG_SET_DEFAULT(ShenandoahCloneBarrier,           false);
 
@@ -113,6 +112,16 @@ void ShenandoahArguments::initialize() {
     }
   }
 
+  // Disable support for dynamic number of GC threads. We do not let the runtime
+  // heuristics to misjudge how many threads we need during the heavy concurrent phase
+  // or a GC pause.
+  if (UseDynamicNumberOfGCThreads) {
+    if (FLAG_IS_CMDLINE(UseDynamicNumberOfGCThreads)) {
+      warning("Shenandoah does not support UseDynamicNumberOfGCThreads, disabling");
+    }
+    FLAG_SET_DEFAULT(UseDynamicNumberOfGCThreads, false);
+  }
+
   if (ShenandoahRegionSampling && FLAG_IS_DEFAULT(PerfDataMemorySize)) {
     // When sampling is enabled, max out the PerfData memory to get more
     // Shenandoah data in, including Matrix.
@@ -132,7 +141,6 @@ void ShenandoahArguments::initialize() {
   if (ShenandoahVerifyOptoBarriers &&
           (!FLAG_IS_DEFAULT(ShenandoahSATBBarrier)            ||
            !FLAG_IS_DEFAULT(ShenandoahLoadRefBarrier)         ||
-           !FLAG_IS_DEFAULT(ShenandoahIUBarrier)              ||
            !FLAG_IS_DEFAULT(ShenandoahCASBarrier)             ||
            !FLAG_IS_DEFAULT(ShenandoahCloneBarrier)
           )) {

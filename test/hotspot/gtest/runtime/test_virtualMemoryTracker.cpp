@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2018, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -32,16 +32,13 @@
 
 #include "precompiled.hpp"
 
-// Included early because the NMT flags don't include it.
-#include "utilities/macros.hpp"
-
-#if INCLUDE_NMT
-
 #include "memory/virtualspace.hpp"
-#include "services/memTracker.hpp"
-#include "services/virtualMemoryTracker.hpp"
+#include "nmt/memTracker.hpp"
+#include "nmt/virtualMemoryTracker.hpp"
 #include "utilities/globalDefinitions.hpp"
+#include "utilities/macros.hpp"
 #include "unittest.hpp"
+
 #include <stdio.h>
 
 // #define LOG(...) printf(__VA_ARGS__); printf("\n"); fflush(stdout);
@@ -58,13 +55,13 @@ namespace {
 
 #define check_empty(rmr)                              \
   do {                                                \
-    check_inner((rmr), NULL, 0, __FILE__, __LINE__);  \
+    check_inner((rmr), nullptr, 0, __FILE__, __LINE__);  \
   } while (false)
 
 static void diagnostic_print(ReservedMemoryRegion* rmr) {
   CommittedRegionIterator iter = rmr->iterate_committed_regions();
   LOG("In reserved region " PTR_FORMAT ", size " SIZE_FORMAT_HEX ":", p2i(rmr->base()), rmr->size());
-  for (const CommittedMemoryRegion* region = iter.next(); region != NULL; region = iter.next()) {
+  for (const CommittedMemoryRegion* region = iter.next(); region != nullptr; region = iter.next()) {
     LOG("   committed region: " PTR_FORMAT ", size " SIZE_FORMAT_HEX, p2i(region->base()), region->size());
   }
 }
@@ -79,7 +76,7 @@ static void check_inner(ReservedMemoryRegion* rmr, R* regions, size_t regions_si
 
 #define WHERE " from " << file << ":" << line
 
-  for (const CommittedMemoryRegion* region = iter.next(); region != NULL; region = iter.next()) {
+  for (const CommittedMemoryRegion* region = iter.next(); region != nullptr; region = iter.next()) {
     EXPECT_LT(i, regions_size) << WHERE;
     EXPECT_EQ(region->base(), regions[i]._addr) << WHERE;
     EXPECT_EQ(region->size(), regions[i]._size) << WHERE;
@@ -566,5 +563,3 @@ TEST_VM(NMT_VirtualMemoryTracker, remove_uncommitted_region) {
     tty->print_cr("skipped.");
   }
 }
-
-#endif // INCLUDE_NMT

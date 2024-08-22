@@ -24,7 +24,7 @@
 package gc.stringdedup;
 
 /*
- * @test TestStringDeduplicationTableResize
+ * @test id=Serial
  * @summary Test string deduplication table resize
  * @bug 8029075
  * @requires vm.gc.Serial
@@ -37,7 +37,7 @@ package gc.stringdedup;
  */
 
 /*
- * @test TestStringDeduplicationTableResize
+ * @test id=G1
  * @summary Test string deduplication table resize
  * @bug 8029075
  * @requires vm.gc.G1
@@ -50,7 +50,7 @@ package gc.stringdedup;
  */
 
 /*
- * @test TestStringDeduplicationTableResize
+ * @test id=Parallel
  * @summary Test string deduplication table resize
  * @bug 8029075
  * @requires vm.gc.Parallel
@@ -63,7 +63,7 @@ package gc.stringdedup;
  */
 
 /*
- * @test TestStringDeduplicationTableResize
+ * @test id=Shenandoah
  * @summary Test string deduplication table resize
  * @bug 8029075
  * @requires vm.gc.Shenandoah
@@ -76,16 +76,29 @@ package gc.stringdedup;
  */
 
 /*
- * @test TestStringDeduplicationTableResize
+ * @test id=ZSinglegen
  * @summary Test string deduplication table resize
  * @bug 8029075
- * @requires vm.gc.Z
+ * @requires vm.gc.ZSinglegen
  * @library /test/lib
  * @library /
  * @modules java.base/jdk.internal.misc:open
  * @modules java.base/java.lang:open
  *          java.management
- * @run driver gc.stringdedup.TestStringDeduplicationTableResize Z
+ * @run driver gc.stringdedup.TestStringDeduplicationTableResize Z -XX:-ZGenerational
+ */
+
+/*
+ * @test id=ZGenerational
+ * @summary Test string deduplication table resize
+ * @bug 8029075
+ * @requires vm.gc.ZGenerational
+ * @library /test/lib
+ * @library /
+ * @modules java.base/jdk.internal.misc:open
+ * @modules java.base/java.lang:open
+ *          java.management
+ * @run driver gc.stringdedup.TestStringDeduplicationTableResize Z -XX:+ZGenerational
  */
 
 public class TestStringDeduplicationTableResize {

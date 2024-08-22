@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1995, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1995, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -47,7 +47,7 @@ import java.util.regex.Pattern;
 import jdk.internal.access.JavaIOFileDescriptorAccess;
 import jdk.internal.access.SharedSecrets;
 import jdk.internal.ref.CleanerFactory;
-import sun.security.action.GetBooleanAction;
+import jdk.internal.misc.Blocker;
 import sun.security.action.GetPropertyAction;
 
 /* This class is for the exclusive use of ProcessBuilder.start() to
@@ -269,11 +269,22 @@ final class ProcessImpl extends Process {
                 // command line parser. The case of the [""] tail escape
                 // sequence could not be realized due to the argument validation
                 // procedure.
-                int count = countLeadingBackslash(verificationType, s, s.length());
-                while (count-- > 0) {
-                    cmdbuf.append(BACKSLASH);   // double the number of backslashes
+                if (verificationType == VERIFICATION_WIN32_SAFE ||
+                    verificationType == VERIFICATION_LEGACY) {
+                    int count = countLeadingBackslash(verificationType, s, s.length());
+                    while (count-- > 0) {
+                        cmdbuf.append(BACKSLASH);   // double the number of backslashes
+                    }
                 }
                 cmdbuf.append('"');
+            } else if (verificationType == VERIFICATION_WIN32_SAFE &&
+                 (s.startsWith("\"") && s.endsWith("\"") && s.length() > 2)) {
+                // Check that quoted argument does not escape the final quote
+                cmdbuf.append(s);
+                int count = countLeadingBackslash(verificationType, s, s.length() - 1);
+                while (count-- > 0) {
+                    cmdbuf.insert(cmdbuf.length() - 1, BACKSLASH);    // double the number of backslashes
+                }
             } else {
                 cmdbuf.append(s);
             }
@@ -282,9 +293,7 @@ final class ProcessImpl extends Process {
     }
 
     /**
-     * Return the argument without quotes (1st and last) if properly quoted, else the arg.
-     * A properly quoted string has first and last characters as quote and
-     * the last quote is not escaped.
+     * Return the argument without quotes (first and last) if quoted, otherwise the arg.
      * @param str a string
      * @return the string without quotes
      */
@@ -292,9 +301,6 @@ final class ProcessImpl extends Process {
         if (!str.startsWith("\"") || !str.endsWith("\"") || str.length() < 2)
             return str;    // no beginning or ending quote, or too short not quoted
 
-        if (str.endsWith("\\\"")) {
-            return str;    // not properly quoted, treat as unquoted
-        }
         // Strip leading and trailing quotes
         return str.substring(1, str.length() - 1);
     }
@@ -387,7 +393,7 @@ final class ProcessImpl extends Process {
 
     // Old version that can be bypassed
     private boolean isShellFile(String executablePath) {
-        String upPath = executablePath.toUpperCase();
+        String upPath = executablePath.toUpperCase(Locale.ROOT);
         return (upPath.endsWith(".CMD") || upPath.endsWith(".BAT"));
     }
 
@@ -509,7 +515,7 @@ final class ProcessImpl extends Process {
                 fdAccess.setHandle(stdin_fd, stdHandles[0]);
                 fdAccess.registerCleanup(stdin_fd);
                 stdin_stream = new BufferedOutputStream(
-                    new FileOutputStream(stdin_fd));
+                    new PipeOutputStream(stdin_fd));
             }
 
             if (stdHandles[1] == -1L || forceNullOutputStream)
@@ -551,17 +557,28 @@ final class ProcessImpl extends Process {
 
     public int exitValue() {
         int exitCode = getExitCodeProcess(handle);
-        if (exitCode == STILL_ACTIVE)
-            throw new IllegalThreadStateException("process has not exited");
+        if (exitCode == STILL_ACTIVE) {
+            // STILL_ACTIVE (259) might be the real exit code
+            if (isProcessAlive(handle)) {
+                throw new IllegalThreadStateException("process has not exited");
+            }
+            // call again, in case the process just exited
+            return getExitCodeProcess(handle);
+        }
         return exitCode;
     }
     private static native int getExitCodeProcess(long handle);
 
     public int waitFor() throws InterruptedException {
-        waitForInterruptibly(handle);
+        boolean attempted = Blocker.begin();
+        try {
+            waitForInterruptibly(handle);
+        } finally {
+            Blocker.end(attempted);
+        }
         if (Thread.interrupted())
             throw new InterruptedException();
-        return exitValue();
+        return getExitCodeProcess(handle);
     }
 
     private static native void waitForInterruptibly(long handle);
@@ -571,7 +588,7 @@ final class ProcessImpl extends Process {
         throws InterruptedException
     {
         long remainingNanos = unit.toNanos(timeout);    // throw NPE before other conditions
-        if (getExitCodeProcess(handle) != STILL_ACTIVE) return true;
+        if (!isProcessAlive(handle)) return true;
         if (timeout <= 0) return false;
 
         long deadline = System.nanoTime() + remainingNanos;
@@ -582,16 +599,21 @@ final class ProcessImpl extends Process {
                 // if wraps around then wait a long while
                 msTimeout = Integer.MAX_VALUE;
             }
-            waitForTimeoutInterruptibly(handle, msTimeout);
+            boolean attempted = Blocker.begin();
+            try {
+                waitForTimeoutInterruptibly(handle, msTimeout);
+            } finally {
+                Blocker.end(attempted);
+            }
             if (Thread.interrupted())
                 throw new InterruptedException();
-            if (getExitCodeProcess(handle) != STILL_ACTIVE) {
+            if (!isProcessAlive(handle)) {
                 return true;
             }
             remainingNanos = deadline - System.nanoTime();
         } while (remainingNanos > 0);
 
-        return (getExitCodeProcess(handle) != STILL_ACTIVE);
+        return !isProcessAlive(handle);
     }
 
     private static native void waitForTimeoutInterruptibly(

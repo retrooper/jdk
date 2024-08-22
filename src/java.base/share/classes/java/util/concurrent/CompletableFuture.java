@@ -306,13 +306,57 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         return RESULT.compareAndSet(this, null, (t == null) ? NIL : t);
     }
 
+    static CompletionException wrapInCompletionException(Throwable t) {
+        if (t == null)
+            return new CompletionException();
+
+        String message;
+        Throwable suppressed;
+        try {
+            message = t.toString();
+            suppressed = null;
+        } catch (Throwable unknown) {
+            message = "";
+            suppressed = unknown;
+        }
+
+        final CompletionException wrapping = new CompletionException(message, t);
+
+        if (suppressed != null)
+            wrapping.addSuppressed(suppressed);
+
+        return wrapping;
+    }
+
+    static ExecutionException wrapInExecutionException(Throwable t) {
+        if (t == null)
+            return new ExecutionException();
+
+        String message;
+        Throwable suppressed;
+        try {
+            message = t.toString();
+            suppressed = null;
+        } catch (Throwable unknown) {
+            message = "";
+            suppressed = unknown;
+        }
+
+        final ExecutionException wrapping = new ExecutionException(message, t);
+
+        if (suppressed != null)
+            wrapping.addSuppressed(suppressed);
+
+        return wrapping;
+    }
+
     /**
      * Returns the encoding of the given (non-null) exception as a
      * wrapped CompletionException unless it is one already.
      */
     static AltResult encodeThrowable(Throwable x) {
         return new AltResult((x instanceof CompletionException) ? x :
-                             new CompletionException(x));
+                wrapInCompletionException(x));
     }
 
     /** Completes with an exceptional result, unless already completed. */
@@ -329,7 +373,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
      */
     static Object encodeThrowable(Throwable x, Object r) {
         if (!(x instanceof CompletionException))
-            x = new CompletionException(x);
+            x = wrapInCompletionException(x);
         else if (r instanceof AltResult && x == ((AltResult)r).ex)
             return r;
         return new AltResult(x);
@@ -365,7 +409,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         if (r instanceof AltResult
             && (x = ((AltResult)r).ex) != null
             && !(x instanceof CompletionException))
-            r = new AltResult(new CompletionException(x));
+            r = new AltResult(wrapInCompletionException(x));
         return r;
     }
 
@@ -380,7 +424,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
     /**
      * Reports result using Future.get conventions.
      */
-    private static Object reportGet(Object r)
+    private static Object reportGet(Object r, String details)
         throws InterruptedException, ExecutionException {
         if (r == null) // by convention below, null means interrupted
             throw new InterruptedException();
@@ -389,11 +433,11 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
             if ((x = ((AltResult)r).ex) == null)
                 return null;
             if (x instanceof CancellationException)
-                throw (CancellationException)x;
+                throw new CancellationException(details, (CancellationException)x);
             if ((x instanceof CompletionException) &&
                 (cause = x.getCause()) != null)
                 x = cause;
-            throw new ExecutionException(x);
+            throw wrapInExecutionException(x);
         }
         return r;
     }
@@ -401,16 +445,16 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
     /**
      * Decodes outcome to return result or throw unchecked exception.
      */
-    private static Object reportJoin(Object r) {
+    private static Object reportJoin(Object r, String details) {
         if (r instanceof AltResult) {
             Throwable x;
             if ((x = ((AltResult)r).ex) == null)
                 return null;
             if (x instanceof CancellationException)
-                throw (CancellationException)x;
+                throw new CancellationException(details, (CancellationException)x);
             if (x instanceof CompletionException)
                 throw (CompletionException)x;
-            throw new CompletionException(x);
+            throw wrapInCompletionException(x);
         }
         return r;
     }
@@ -438,7 +482,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         ForkJoinPool.commonPool() : new ThreadPerTaskExecutor();
 
     /** Fallback if ForkJoinPool.commonPool() cannot support parallelism */
-    static final class ThreadPerTaskExecutor implements Executor {
+    private static final class ThreadPerTaskExecutor implements Executor {
         public void execute(Runnable r) {
             Objects.requireNonNull(r);
             new Thread(r).start();
@@ -2070,7 +2114,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         Object r;
         if ((r = result) == null)
             r = waitingGet(true);
-        return (T) reportGet(r);
+        return (T) reportGet(r, "get");
     }
 
     /**
@@ -2093,7 +2137,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         Object r;
         if ((r = result) == null)
             r = timedGet(nanos);
-        return (T) reportGet(r);
+        return (T) reportGet(r, "get");
     }
 
     /**
@@ -2115,7 +2159,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         Object r;
         if ((r = result) == null)
             r = waitingGet(false);
-        return (T) reportJoin(r);
+        return (T) reportJoin(r, "join");
     }
 
     /**
@@ -2131,7 +2175,45 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
     @SuppressWarnings("unchecked")
     public T getNow(T valueIfAbsent) {
         Object r;
-        return ((r = result) == null) ? valueIfAbsent : (T) reportJoin(r);
+        return ((r = result) == null) ? valueIfAbsent : (T) reportJoin(r, "getNow");
+    }
+
+    /**
+     * @since 19
+     */
+    @Override
+    public T resultNow() {
+        Object r = result;
+        if (r != null) {
+            if (r instanceof AltResult alt) {
+                if (alt.ex == null) return null;
+            } else {
+                @SuppressWarnings("unchecked")
+                T t = (T) r;
+                return t;
+            }
+        }
+        throw new IllegalStateException();
+    }
+
+    /**
+     * @since 19
+     */
+    @Override
+    public Throwable exceptionNow() {
+        Object r = result;
+        Throwable x;
+        if (r instanceof AltResult alt
+                && ((x = alt.ex) != null)
+                && !(x instanceof CancellationException)) {
+            if (x instanceof CompletionException) {
+                Throwable cause = x.getCause();
+                if (cause != null)
+                    x = cause;
+            }
+            return x;
+        }
+        throw new IllegalStateException();
     }
 
     /**
@@ -2364,26 +2446,41 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         return uniExceptionallyStage(null, fn);
     }
 
+    /**
+     * @since 12
+     */
     public CompletableFuture<T> exceptionallyAsync(
         Function<Throwable, ? extends T> fn) {
         return uniExceptionallyStage(defaultExecutor(), fn);
     }
 
+    /**
+     * @since 12
+     */
     public CompletableFuture<T> exceptionallyAsync(
         Function<Throwable, ? extends T> fn, Executor executor) {
         return uniExceptionallyStage(screenExecutor(executor), fn);
     }
 
+    /**
+     * @since 12
+     */
     public CompletableFuture<T> exceptionallyCompose(
         Function<Throwable, ? extends CompletionStage<T>> fn) {
         return uniComposeExceptionallyStage(null, fn);
     }
 
+    /**
+     * @since 12
+     */
     public CompletableFuture<T> exceptionallyComposeAsync(
         Function<Throwable, ? extends CompletionStage<T>> fn) {
         return uniComposeExceptionallyStage(defaultExecutor(), fn);
     }
 
+    /**
+     * @since 12
+     */
     public CompletableFuture<T> exceptionallyComposeAsync(
         Function<Throwable, ? extends CompletionStage<T>> fn,
         Executor executor) {
@@ -2510,6 +2607,23 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
     }
 
     /**
+     * @since 19
+     */
+    @Override
+    public State state() {
+        Object r = result;
+        if (r == null)
+            return State.RUNNING;
+        if (r != NIL && r instanceof AltResult alt) {
+            if (alt.ex instanceof CancellationException)
+                return State.CANCELLED;
+            else
+                return State.FAILED;
+        }
+        return State.SUCCESS;
+    }
+
+    /**
      * Forcibly sets or resets the value subsequently returned by
      * method {@link #get()} and related methods, whether or not
      * already completed. This method is designed for use only in
@@ -2559,8 +2673,8 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
     /**
      * Returns a string identifying this CompletableFuture, as well as
      * its completion state.  The state, in brackets, contains the
-     * String {@code "Completed Normally"} or the String {@code
-     * "Completed Exceptionally"}, or the String {@code "Not
+     * String {@code "Completed normally"} or the String {@code
+     * "Completed exceptionally"}, or the String {@code "Not
      * completed"} followed by the number of CompletableFutures
      * dependent upon its completion, if any.
      *
@@ -2577,7 +2691,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
                 ? "[Not completed]"
                 : "[Not completed, " + count + " dependents]")
              : (((r instanceof AltResult) && ((AltResult)r).ex != null)
-                ? "[Completed exceptionally: " + ((AltResult)r).ex + "]"
+                ? "[Completed exceptionally: " + ((AltResult)r).ex.getClass().getName() + "]"
                 : "[Completed normally]"));
     }
 
@@ -2691,7 +2805,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
     /**
      * Exceptionally completes this CompletableFuture with
      * a {@link TimeoutException} if not otherwise completed
-     * before the given timeout.
+     * before the given timeout elapsed.
      *
      * @param timeout how long to wait before completing exceptionally
      *        with a TimeoutException, in units of {@code unit}
@@ -2711,7 +2825,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
 
     /**
      * Completes this CompletableFuture with the given value if not
-     * otherwise completed before the given timeout.
+     * otherwise completed before the given timeout elapsed.
      *
      * @param value the value to use upon timeout
      * @param timeout how long to wait before completing normally
@@ -2891,7 +3005,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         final Future<?> f;
         Canceller(Future<?> f) { this.f = f; }
         public void accept(Object ignore, Throwable ex) {
-            if (ex == null && f != null && !f.isDone())
+            if (f != null && !f.isDone())
                 f.cancel(false);
         }
     }
@@ -2912,6 +3026,10 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
             throw new UnsupportedOperationException(); }
         @Override public T join() {
             throw new UnsupportedOperationException(); }
+        @Override public T resultNow() {
+            throw new UnsupportedOperationException(); }
+        @Override public Throwable exceptionNow() {
+            throw new UnsupportedOperationException(); }
         @Override public boolean complete(T value) {
             throw new UnsupportedOperationException(); }
         @Override public boolean completeExceptionally(Throwable ex) {
@@ -2927,6 +3045,8 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         @Override public boolean isCancelled() {
             throw new UnsupportedOperationException(); }
         @Override public boolean isCompletedExceptionally() {
+            throw new UnsupportedOperationException(); }
+        @Override public State state() {
             throw new UnsupportedOperationException(); }
         @Override public int getNumberOfDependents() {
             throw new UnsupportedOperationException(); }
@@ -2969,7 +3089,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         }
 
         // Reduce the risk of rare disastrous classloading in first call to
-        // LockSupport.park: https://bugs.openjdk.java.net/browse/JDK-8074773
+        // LockSupport.park: https://bugs.openjdk.org/browse/JDK-8074773
         Class<?> ensureLoaded = LockSupport.class;
     }
 }

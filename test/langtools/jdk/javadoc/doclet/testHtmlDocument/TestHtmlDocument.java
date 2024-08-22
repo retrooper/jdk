@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -28,6 +28,7 @@
  * @library ../../lib
  * @modules jdk.javadoc/jdk.javadoc.internal.doclets.formats.html.markup
  *          jdk.javadoc/jdk.javadoc.internal.doclets.toolkit.util
+ *          jdk.javadoc/jdk.javadoc.internal.html
  *          jdk.javadoc/jdk.javadoc.internal.tool
  * @build javadoc.tester.*
  * @run main TestHtmlDocument
@@ -35,8 +36,7 @@
 
 
 import jdk.javadoc.internal.doclets.formats.html.markup.*;
-
-import static jdk.javadoc.internal.doclets.toolkit.util.DocletConstants.NL;
+import jdk.javadoc.internal.html.*;
 
 /**
  * The class reads each file, complete with newlines, into a string to easily
@@ -48,7 +48,7 @@ public class TestHtmlDocument extends JavadocTester {
 
     // Entry point
     public static void main(String... args) throws Exception {
-        TestHtmlDocument tester = new TestHtmlDocument();
+        var tester = new TestHtmlDocument();
         tester.runTests();
     }
 
@@ -56,7 +56,7 @@ public class TestHtmlDocument extends JavadocTester {
     public void test() {
         checking("markup");
         // Check whether the generated markup is same as the existing markup.
-        String expected = readFile(testSrc, "testMarkup.html").replace("\n", NL);
+        String expected = readFile(testSrc, "testMarkup.html");
         String actual = generateHtmlTree();
         if (actual.equals(expected)) {
             passed("");
@@ -70,37 +70,30 @@ public class TestHtmlDocument extends JavadocTester {
     // Generate the HTML output using the HTML document generation within doclet.
     public static String generateHtmlTree() {
         // Document type for the HTML document
-        HtmlTree html = new HtmlTree(TagName.HTML);
-        HtmlTree head = new HtmlTree(TagName.HEAD);
-        HtmlTree title = new HtmlTree(TagName.TITLE);
+        HtmlTree html = new HtmlTree(HtmlTag.HTML);
+        HtmlTree head = new HtmlTree(HtmlTag.HEAD);
+        HtmlTree title = new HtmlTree(HtmlTag.TITLE);
         // String content within the document
         TextBuilder titleContent = new TextBuilder("Markup test");
         title.add(titleContent);
         head.add(title);
         // Test META tag
-        HtmlTree meta = new HtmlTree(TagName.META);
+        HtmlTree meta = new HtmlTree(HtmlTag.META);
         meta.put(HtmlAttr.NAME, "keywords");
         meta.put(HtmlAttr.CONTENT, "testContent");
         head.add(meta);
-        // Test invalid META tag
-        HtmlTree invmeta = new HtmlTree(TagName.META);
-        head.add(invmeta);
-        // Test LINK tag
-        HtmlTree link = new HtmlTree(TagName.LINK);
+        HtmlTree link = new HtmlTree(HtmlTag.LINK);
         link.put(HtmlAttr.REL, "testRel");
         link.put(HtmlAttr.HREF, "testLink.html");
         head.add(link);
-        // Test invalid LINK tag
-        HtmlTree invlink = new HtmlTree(TagName.LINK);
-        head.add(invlink);
         html.add(head);
         // Comment within the document
         Comment bodyMarker = new Comment("======== START OF BODY ========");
         html.add(bodyMarker);
-        HtmlTree body = new HtmlTree(TagName.BODY);
+        HtmlTree body = new HtmlTree(HtmlTag.BODY);
         Comment pMarker = new Comment("======== START OF PARAGRAPH ========");
         body.add(pMarker);
-        HtmlTree p = new HtmlTree(TagName.P);
+        HtmlTree p = new HtmlTree(HtmlTag.P);
         TextBuilder bodyContent = new TextBuilder(
                 "This document is generated from sample source code and HTML " +
                 "files with examples of a wide variety of Java language constructs: packages, " +
@@ -113,24 +106,24 @@ public class TestHtmlDocument extends JavadocTester {
         TextBuilder pContent = new TextBuilder(" to <test> out a link.");
         p.add(pContent);
         body.add(p);
-        HtmlTree p1 = new HtmlTree(TagName.P);
+        HtmlTree p1 = new HtmlTree(HtmlTag.P);
         // Test another version of A tag.
-        HtmlTree anchor = new HtmlTree(TagName.A);
+        HtmlTree anchor = new HtmlTree(HtmlTag.A);
         anchor.put(HtmlAttr.HREF, "testLink.html");
         anchor.put(HtmlAttr.ID, "Another version of a tag");
         p1.add(anchor);
         body.add(p1);
         // Test for empty tags.
-        HtmlTree dl = new HtmlTree(TagName.DL);
+        HtmlTree dl = new HtmlTree(HtmlTag.DL);
         html.add(dl);
         // Test for empty nested tags.
-        HtmlTree dlTree = new HtmlTree(TagName.DL);
-        dlTree.add(new HtmlTree(TagName.DT));
-        dlTree.add(new HtmlTree (TagName.DD));
+        HtmlTree dlTree = new HtmlTree(HtmlTag.DL);
+        dlTree.add(new HtmlTree(HtmlTag.DT));
+        dlTree.add(new HtmlTree (HtmlTag.DD));
         html.add(dlTree);
-        HtmlTree dlDisplay = new HtmlTree(TagName.DL);
-        dlDisplay.add(new HtmlTree(TagName.DT));
-        HtmlTree dd = new HtmlTree (TagName.DD);
+        HtmlTree dlDisplay = new HtmlTree(HtmlTag.DL);
+        dlDisplay.add(new HtmlTree(HtmlTag.DT));
+        HtmlTree dd = new HtmlTree (HtmlTag.DD);
         TextBuilder ddContent = new TextBuilder("Test DD");
         dd.add(ddContent);
         dlDisplay.add(dd);
@@ -139,7 +132,7 @@ public class TestHtmlDocument extends JavadocTester {
         body.add(emptyString);
         Comment emptyComment = new Comment("");
         body.add(emptyComment);
-        HtmlTree hr = new HtmlTree(TagName.HR);
+        HtmlTree hr = new HtmlTree(HtmlTag.HR);
         body.add(hr);
         html.add(body);
         HtmlDocument htmlDoc = new HtmlDocument(html);

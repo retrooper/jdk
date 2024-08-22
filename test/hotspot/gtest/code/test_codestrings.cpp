@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2021, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -29,18 +29,28 @@
 #include "asm/macroAssembler.inline.hpp"
 #include "compiler/disassembler.hpp"
 #include "memory/resourceArea.hpp"
-#include "unittest.hpp"
 
+#include "utilities/vmassert_uninstall.hpp"
 #include <regex>
+#include "utilities/vmassert_reinstall.hpp"
+
+#include "unittest.hpp"
 
 static const char* replace_addr_expr(const char* str)
 {
     // Remove any address expression "0x0123456789abcdef" found in order to
     // aid string comparison. Also remove any trailing printout from a padded
-    // buffer.
+    // buffer (too brittle?).
 
-    std::basic_string<char> tmp = std::regex_replace(str, std::regex("0x[0-9a-fA-F]+"), "<addr>");
-    std::basic_string<char> red = std::regex_replace(tmp, std::regex("\\s+<addr>:\\s+\\.inst\\t<addr> ; undefined"), "");
+    std::basic_string<char> tmp1 = std::regex_replace(str, std::regex("0x[0-9a-fA-F]+"), "<addr>");
+    // Padding: aarch64
+    std::basic_string<char> tmp2 = std::regex_replace(tmp1, std::regex("\\s+<addr>:\\s+\\.inst\\t<addr> ; undefined"), "");
+    std::basic_string<char> tmp3 = std::regex_replace(tmp2, std::regex("\\s+<addr>:\\s+udf\\t#0"), "");
+    // Padding: riscv
+    std::basic_string<char> tmp4  = std::regex_replace(tmp3, std::regex("\\s+<addr>:\\s+unimp"), "");
+    // Padding: x64
+    std::basic_string<char> tmp5  = std::regex_replace(tmp4, std::regex("\\s+<addr>:\\s+hlt[ \\t]+(?!\\n\\s+;;)"), "");
+    std::basic_string<char> red  = std::regex_replace(tmp5, std::regex("(\\s+<addr>:\\s+nop)[ \\t]*"), "$1");
 
     return os::strdup(red.c_str());
 }
@@ -253,7 +263,12 @@ static void buffer_blob_test()
     BufferBlob::free(blob);
 }
 
+#if defined(PPC) || defined(S390)
+// Neither ppc nor s390 compiler use code strings
+TEST_VM(codestrings, DISABLED_validate)
+#else
 TEST_VM(codestrings, validate)
+#endif
 {
     code_buffer_test();
     buffer_blob_test();

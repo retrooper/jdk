@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,7 +23,12 @@
  */
 
 #include "precompiled.hpp"
+#include "memory/allocation.hpp"
+#include "utilities/checkedCast.hpp"
+#include "utilities/debug.hpp"
+#include "utilities/globalDefinitions.hpp"
 #include "utilities/utf8.hpp"
+#include "runtime/os.hpp"
 
 // Assume the utf8 string is in legal form and has been
 // checked in the class file parser/format checker.
@@ -220,7 +225,7 @@ void UTF8::as_quoted_ascii(const char* utf8_str, int utf8_length, char* buf, int
       *p++ = (char)c;
     } else {
       if (p + 6 >= end) break;      // string is truncated
-      sprintf(p, "\\u%04x", c);
+      os::snprintf_checked(p, 7, "\\u%04x", c);  // counting terminating zero in
       p += 6;
     }
   }
@@ -233,7 +238,7 @@ void UTF8::as_quoted_ascii(const char* utf8_str, int utf8_length, char* buf, int
 // no longer used, but could be useful to test output of UTF8::as_quoted_ascii
 const char* UTF8::from_quoted_ascii(const char* quoted_ascii_str) {
   const char *ptr = quoted_ascii_str;
-  char* result = NULL;
+  char* result = nullptr;
   while (*ptr != '\0') {
     char c = *ptr;
     if (c < 32 || c >= 127) break;
@@ -244,11 +249,11 @@ const char* UTF8::from_quoted_ascii(const char* quoted_ascii_str) {
   }
   // everything up to this point was ok.
   int length = ptr - quoted_ascii_str;
-  char* buffer = NULL;
+  char* buffer = nullptr;
   for (int round = 0; round < 2; round++) {
     while (*ptr != '\0') {
       if (*ptr != '\\') {
-        if (buffer != NULL) {
+        if (buffer != nullptr) {
           buffer[length] = *ptr;
         }
         length++;
@@ -276,7 +281,7 @@ const char* UTF8::from_quoted_ascii(const char* quoted_ascii_str) {
                   ShouldNotReachHere();
               }
             }
-            if (buffer == NULL) {
+            if (buffer == nullptr) {
               char utf8_buffer[4];
               char* next = (char*)utf8_write((u_char*)utf8_buffer, value);
               length += next - utf8_buffer;
@@ -286,10 +291,10 @@ const char* UTF8::from_quoted_ascii(const char* quoted_ascii_str) {
             }
             break;
           }
-          case 't': if (buffer != NULL) buffer[length] = '\t'; ptr += 2; length++; break;
-          case 'n': if (buffer != NULL) buffer[length] = '\n'; ptr += 2; length++; break;
-          case 'r': if (buffer != NULL) buffer[length] = '\r'; ptr += 2; length++; break;
-          case 'f': if (buffer != NULL) buffer[length] = '\f'; ptr += 2; length++; break;
+          case 't': if (buffer != nullptr) buffer[length] = '\t'; ptr += 2; length++; break;
+          case 'n': if (buffer != nullptr) buffer[length] = '\n'; ptr += 2; length++; break;
+          case 'r': if (buffer != nullptr) buffer[length] = '\r'; ptr += 2; length++; break;
+          case 'f': if (buffer != nullptr) buffer[length] = '\f'; ptr += 2; length++; break;
           default:
             ShouldNotReachHere();
         }
@@ -337,10 +342,10 @@ bool UTF8::is_legal_utf8(const unsigned char* buffer, int length,
     // For an unsigned char v,
     // (v | v - 1) is < 128 (highest bit 0) for 0 < v < 128;
     // (v | v - 1) is >= 128 (highest bit 1) for v == 0 or v >= 128.
-    unsigned char res = b0 | b0 - 1 |
-                        b1 | b1 - 1 |
-                        b2 | b2 - 1 |
-                        b3 | b3 - 1;
+    unsigned char res = b0 | (b0 - 1) |
+                        b1 | (b1 - 1) |
+                        b2 | (b2 - 1) |
+                        b3 | (b3 - 1);
     if (res >= 128) break;
     i += 4;
   }
@@ -387,6 +392,69 @@ bool UTF8::is_legal_utf8(const unsigned char* buffer, int length,
   return true;
 }
 
+// Return true if `b` could be the starting byte of an encoded 2,3 or 6
+// byte sequence.
+static bool is_starting_byte(unsigned char b) {
+  return b >= 0xC0 && b <= 0xEF;
+}
+
+// Takes an incoming buffer that was valid UTF-8, but which has been truncated such that
+// the last encoding may be partial, and returns the same buffer with a NUL-terminator
+// inserted such that any partial encoding has gone.
+// Note: if the incoming buffer is already valid then we may still drop the last encoding.
+// To avoid that the caller can choose to check for validity first.
+// The incoming buffer is still expected to be NUL-terminated.
+// The incoming buffer is expected to be a realistic size - we assert if it is too small.
+void UTF8::truncate_to_legal_utf8(unsigned char* buffer, int length) {
+  assert(length > 5, "invalid length");
+  assert(buffer[length - 1] == '\0', "Buffer should be NUL-terminated");
+
+  if (buffer[length - 2] < 128) {  // valid "ascii" - common case
+    return;
+  }
+
+  // Modified UTF-8 encodes characters in sequences of 1, 2, 3 or 6 bytes.
+  // The last byte is invalid if it is:
+  // - the 1st byte of a 2, 3 or 6 byte sequence
+  //     0b110xxxxx
+  //     0b1110xxxx
+  //     0b11101101
+  // - the 2nd byte of a 3 or 6 byte sequence
+  //     0b10xxxxxx
+  //     0b1010xxxx
+  // - the 3rd, 4th or 5th byte of a 6 byte sequence
+  //     0b10xxxxxx
+  //     0b11101101
+  //     0b1011xxxx
+  //
+  // Rather than checking all possible situations we simplify things noting that as we have already
+  // got a truncated string, then dropping one more character is not significant. So we work from the
+  // end of the buffer looking for the first byte that can be the starting byte of a UTF-8 encoded sequence,
+  // then we insert NUL at that location to terminate the buffer. There is an added complexity with 6 byte
+  // encodings as the first and fourth bytes are the same and overlap with the 3 byte encoding.
+
+  for (int index = length - 2; index > 0; index--) {
+    if (is_starting_byte(buffer[index])) {
+      if (buffer[index] == 0xED) {
+        // Could be first byte of 3 or 6, or fourth byte of 6.
+        // If fourth the previous three bytes will encode a high
+        // surrogate value in the range EDA080 to EDAFBF. We only
+        // need to check for EDA to establish this as the "missing"
+        // values in EDAxxx would not be valid 3 byte encodings.
+        if ((index - 3) >= 0 &&
+            (buffer[index - 3] == 0xED) &&
+            ((buffer[index - 2] & 0xF0) == 0xA0)) {
+          assert(buffer[index - 1] >= 0x80 && buffer[index - 1] <= 0xBF, "sanity check");
+          // It was fourth byte so truncate 3 bytes earlier
+          index -= 3;
+        }
+      }
+      buffer[index] = '\0';
+      break;
+    }
+  }
+}
+
 //-------------------------------------------------------------------------------------
 
 bool UNICODE::is_latin1(jchar c) {
@@ -427,12 +495,16 @@ int UNICODE::utf8_size(jbyte c) {
 
 template<typename T>
 int UNICODE::utf8_length(const T* base, int length) {
-  int result = 0;
+  size_t result = 0;
   for (int index = 0; index < length; index++) {
     T c = base[index];
-    result += utf8_size(c);
+    int sz = utf8_size(c);
+    if (result + sz > INT_MAX-1) {
+      break;
+    }
+    result += sz;
   }
-  return result;
+  return checked_cast<int>(result);
 }
 
 template<typename T>
@@ -514,7 +586,7 @@ void UNICODE::as_quoted_ascii(const T* base, int length, char* buf, int buflen) 
       *p++ = (char)c;
     } else {
       if (p + 6 >= end) break;      // string is truncated
-      sprintf(p, "\\u%04x", c);
+      os::snprintf_checked(p, 7, "\\u%04x", c);
       p += 6;
     }
   }

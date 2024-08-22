@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2021, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -28,7 +28,7 @@ import compiler.lib.ir_framework.Compiler;
 import compiler.lib.ir_framework.shared.*;
 import jdk.test.lib.Platform;
 import jdk.test.lib.Utils;
-import sun.hotspot.WhiteBox;
+import jdk.test.whitebox.WhiteBox;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -74,8 +74,18 @@ public class TestVM {
     public static final int WARMUP_ITERATIONS = Integer.parseInt(System.getProperty("Warmup", "2000"));
 
     private static final boolean TIERED_COMPILATION = (Boolean)WHITE_BOX.getVMFlag("TieredCompilation");
-    private static final CompLevel TIERED_COMPILATION_STOP_AT_LEVEL = CompLevel.forValue(((Long)WHITE_BOX.getVMFlag("TieredStopAtLevel")).intValue());
-    public static final boolean TEST_C1 = TIERED_COMPILATION && TIERED_COMPILATION_STOP_AT_LEVEL.getValue() < CompLevel.C2.getValue();
+    private static final CompLevel TIERED_COMPILATION_STOP_AT_LEVEL;
+    private static final boolean CLIENT_VM = Platform.isClient();
+
+    static {
+        CompLevel level = CompLevel.forValue(((Long)WHITE_BOX.getVMFlag("TieredStopAtLevel")).intValue());
+        if (CLIENT_VM && level == CompLevel.C2) {
+            // No C2 available, use C1 level without profiling.
+            level = CompLevel.C1_SIMPLE;
+        }
+        TIERED_COMPILATION_STOP_AT_LEVEL = level;
+    }
+    public static final boolean TEST_C1 = (TIERED_COMPILATION && TIERED_COMPILATION_STOP_AT_LEVEL.getValue() < CompLevel.C2.getValue()) || CLIENT_VM;
 
     static final boolean XCOMP = Platform.isComp();
     static final boolean VERBOSE = Boolean.getBoolean("Verbose");
@@ -97,6 +107,7 @@ public class TestVM {
     private final HashMap<Method, DeclaredTest> declaredTests = new HashMap<>();
     private final List<AbstractTest> allTests = new ArrayList<>();
     private final HashMap<String, Method> testMethodMap = new HashMap<>();
+    private final HashMap<String, Method> setupMethodMap = new HashMap<>();
     private final List<String> excludeList;
     private final List<String> testList;
     private Set<Class<?>> helperClasses = null; // Helper classes that contain framework annotations to be processed.
@@ -215,6 +226,8 @@ public class TestVM {
                                     "Cannot use @Run annotation in " + clazzType + " " + c + " at " + m);
             TestFormat.checkNoThrow(getAnnotation(m, Check.class) == null,
                                     "Cannot use @Check annotation in " + clazzType + " " + c + " at " + m);
+            TestFormat.checkNoThrow(getAnnotation(m, Setup.class) == null,
+                                    "Cannot use @Setup annotation in " + clazzType + " " + c + " at " + m);
         }
     }
 
@@ -246,6 +259,11 @@ public class TestVM {
         if (DUMP_REPLAY) {
             addReplay();
         }
+
+        // Collect the @Setup methods so we can reference them
+        // from the test methods
+        collectSetupMethods();
+
         // Make sure to first setup test methods and make them non-inlineable and only then process compile commands.
         setupDeclaredTests();
         processControlAnnotations(testClass);
@@ -256,8 +274,9 @@ public class TestVM {
         addBaseTests();
         if (PRINT_VALID_IR_RULES) {
             irMatchRulePrinter.emit();
+            VMInfoPrinter.emit();
         }
-        TestFormat.reportIfAnyFailures();
+        TestFormat.throwIfAnyFailures();
         declaredTests.clear();
         testMethodMap.clear();
     }
@@ -353,7 +372,9 @@ public class TestVM {
             TestFormat.checkNoThrow(WHITE_BOX.enqueueInitializerForCompilation(c, level.getValue()),
                                     "Failed to enqueue <clinit> of " + c + " for compilation. Did you specify "
                                     + "@ForceCompileClassInitializer without providing a static class initialization? "
-                                    + "Make sure to provide any form of static initialization or remove the annotation.");
+                                    + "Make sure to provide any form of static initialization or remove the annotation. "
+                                    + "For debugging purposes, -DIgnoreCompilerControls=true can be used to temporarly "
+                                    + "ignore @ForceCompileClassInitializer annotations.");
         }
     }
 
@@ -482,6 +503,35 @@ public class TestVM {
         }
     }
 
+
+    /**
+     *  Collect all @Setup annotated methods and add them to setupMethodMap, for convenience to reference later from
+     *  tests with @Arguments(setup = "setupMethodName").
+     */
+    private void collectSetupMethods() {
+        for (Method m : testClass.getDeclaredMethods()) {
+            Setup setupAnnotation = getAnnotation(m, Setup.class);
+            if (setupAnnotation != null) {
+                addSetupMethod(m);
+            }
+        }
+    }
+
+    private void addSetupMethod(Method m) {
+        TestFormat.checkNoThrow(getAnnotation(m, Test.class) == null,
+                                "@Setup method cannot have @Test annotation: " + m);
+        TestFormat.checkNoThrow(getAnnotation(m, Check.class) == null,
+                                "@Setup method cannot have @Check annotation: " + m);
+        TestFormat.checkNoThrow(getAnnotation(m, Arguments.class) == null,
+                                "@Setup method cannot have @Arguments annotation: " + m);
+        TestFormat.checkNoThrow(getAnnotation(m, Run.class) == null,
+                                "@Setup method cannot have @Run annotation: " + m);
+        Method mOverloaded = setupMethodMap.put(m.getName(), m);
+        TestFormat.checkNoThrow(mOverloaded == null,
+                                "@Setup method cannot be overloaded: " + mOverloaded + " with " + m);
+        m.setAccessible(true);
+    }
+
     /**
      * Setup @Test annotated method an add them to the declaredTests map to have a convenient way of accessing them
      * once setting up a framework test (base  checked, or custom run test).
@@ -493,7 +543,8 @@ public class TestVM {
                 if (testAnno != null) {
                     addDeclaredTest(m);
                 } else {
-                    TestFormat.checkNoThrow(!m.isAnnotationPresent(IR.class), "Found @IR annotation on non-@Test method " + m);
+                    TestFormat.checkNoThrow(!m.isAnnotationPresent(IR.class) && !m.isAnnotationPresent(IRs.class),
+                                            "Found @IR annotation on non-@Test method " + m);
                     TestFormat.checkNoThrow(!m.isAnnotationPresent(Warmup.class) || getAnnotation(m, Run.class) != null,
                                             "Found @Warmup annotation on non-@Test or non-@Run method " + m);
                 }
@@ -526,7 +577,8 @@ public class TestVM {
         if (EXCLUDE_RANDOM) {
             compLevel = compLevel.excludeCompilationRandomly(m);
         }
-        DeclaredTest test = new DeclaredTest(m, ArgumentValue.getArguments(m), compLevel, warmupIterations);
+        ArgumentsProvider argumentsProvider = ArgumentsProviderBuilder.build(m, setupMethodMap);
+        DeclaredTest test = new DeclaredTest(m, argumentsProvider, compLevel, warmupIterations);
         declaredTests.put(m, test);
         testMethodMap.put(m.getName(), m);
     }
@@ -562,10 +614,13 @@ public class TestVM {
             // Use highest available compilation level by default (usually C2).
             compLevel = TIERED_COMPILATION_STOP_AT_LEVEL;
         }
-        if (!TIERED_COMPILATION && compLevel.getValue() < CompLevel.C2.getValue()) {
+        if (TEST_C1 && compLevel == CompLevel.C2) {
             return CompLevel.SKIP;
         }
-        if (TIERED_COMPILATION && compLevel.getValue() > TIERED_COMPILATION_STOP_AT_LEVEL.getValue()) {
+        if ((!TIERED_COMPILATION && !CLIENT_VM) && compLevel.getValue() < CompLevel.C2.getValue()) {
+            return CompLevel.SKIP;
+        }
+        if ((TIERED_COMPILATION || CLIENT_VM) && compLevel.getValue() > TIERED_COMPILATION_STOP_AT_LEVEL.getValue()) {
             return CompLevel.SKIP;
         }
         return compLevel;
@@ -619,13 +674,16 @@ public class TestVM {
         DeclaredTest test = declaredTests.get(testMethod);
         checkCheckedTest(m, checkAnno, runAnno, testMethod, test);
         test.setAttachedMethod(m);
+        TestFormat.check(getAnnotation(testMethod, Arguments.class) != null || testMethod.getParameterCount() == 0,
+                         "Missing @Arguments annotation to define arguments of " + testMethod + " required by "
+                         + "checked test " + m);
         CheckedTest.Parameter parameter = getCheckedTestParameter(m, testMethod);
         dontCompileAndDontInlineMethod(m);
         CheckedTest checkedTest = new CheckedTest(test, m, checkAnno, parameter, shouldExcludeTest(testMethod.getName()));
         allTests.add(checkedTest);
         if (PRINT_VALID_IR_RULES) {
             // Only need to emit IR verification information if IR verification is actually performed.
-            irMatchRulePrinter.emitRuleEncoding(m, checkedTest.isSkipped());
+            irMatchRulePrinter.emitRuleEncoding(testMethod, checkedTest.isSkipped());
         }
     }
 
@@ -709,7 +767,8 @@ public class TestVM {
         TestFormat.check(attachedMethod == null,
                          "Cannot use @Test " + testMethod + " for more than one @Run/@Check method. Found: "
                          + m + ", " + attachedMethod);
-        TestFormat.check(!test.hasArguments(),
+        Arguments argumentsAnno = getAnnotation(testMethod, Arguments.class);
+        TestFormat.check(argumentsAnno == null,
                          "Cannot use @Arguments at test method " + testMethod + " in combination with @Run method " + m);
         Warmup warmupAnno = getAnnotation(testMethod, Warmup.class);
         TestFormat.checkNoThrow(warmupAnno == null,

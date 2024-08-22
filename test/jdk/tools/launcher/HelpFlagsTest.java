@@ -47,7 +47,9 @@ public class HelpFlagsTest extends TestHelper {
     static final String[] TOOLS_NOT_TO_TEST = {
         "appletviewer",     // deprecated, don't test
         "jaccessinspector", // gui, don't test, win only
+        "jaccessinspector-32", // gui, don't test, win-32 only
         "jaccesswalker",    // gui, don't test, win only
+        "jaccesswalker-32", // gui, don't test, win-32 only
         "jconsole",         // gui, don't test
         "servertool",       // none. Shell, don't test.
         "javaw",            // don't test, win only
@@ -139,6 +141,7 @@ public class HelpFlagsTest extends TestHelper {
         new ToolHelpSpec("jlink",       1,   1,   1,   0,         0,    0,     2),     // -?, -h, --help
         new ToolHelpSpec("jmap",        1,   1,   1,   0,         1,    0,     1),     // -?, -h, --help, -help accepted but not documented.
         new ToolHelpSpec("jmod",        1,   1,   1,   0,         1,    0,     2),     // -?, -h, --help, -help accepted but not documented.
+        new ToolHelpSpec("jnativescan", 1,   1,   1,   0,         1,    0,     1),     // -?, -h, --help, -help accepted but not documented.
         new ToolHelpSpec("jps",         1,   1,   1,   0,         1,    1,     1),     // -?, -h, --help -help, Documents -help
         new ToolHelpSpec("jrunscript",  1,   1,   1,   0,         1,    1,     7),     // -?, -h, --help -help, Documents -help
         new ToolHelpSpec("jshell",      1,   1,   1,   0,         1,    0,     1),     // -?, -h, --help, -help accepted but not documented.
@@ -149,6 +152,7 @@ public class HelpFlagsTest extends TestHelper {
         new ToolHelpSpec("rmiregistry", 0,   0,   0,   0,         0,    0,     1),     // none, prints help message anyways.
         new ToolHelpSpec("serialver",   0,   0,   0,   0,         0,    0,     1),     // none, prints help message anyways.
         new ToolHelpSpec("jpackage",    0,   1,   1,   0,         0,    1,     1),     //     -h, --help,
+        new ToolHelpSpec("jwebserver",  1,   1,   1,   0,         0,    1,     1),     // -?, -h, --help
     };
 
     // Returns corresponding object from jdkTools array.

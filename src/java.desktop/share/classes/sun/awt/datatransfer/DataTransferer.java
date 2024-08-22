@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2000, 2023, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -642,7 +642,7 @@ public abstract class DataTransferer {
 
         // In other words: we are doing char alignment here basing on suggestion
         // that count of zero-'terminators' is a number of bytes in one symbol
-        // for selected charset (clipboard format). It is not complitly true for
+        // for selected charset (clipboard format). It is not completely true for
         // multibyte coding like UTF-8, but helps understand the procedure.
         // "abcde\0" -> "abcde"
 
@@ -945,10 +945,9 @@ search:
                 }
 
                 if (DataFlavorUtil.isFlavorCharsetTextType(flavor) && isTextFormat(format)) {
-                    byte[] bytes = bos.toByteArray();
                     String sourceEncoding = DataFlavorUtil.getTextCharset(flavor);
                     return translateTransferableString(
-                               new String(bytes, sourceEncoding),
+                               bos.toString(sourceEncoding),
                                format);
                 }
                 theByteArray = bos.toByteArray();
@@ -1958,8 +1957,8 @@ search:
         Set<Long> keySet = map.keySet();
         long[] retval = new long[keySet.size()];
         int i = 0;
-        for (Iterator<Long> iter = keySet.iterator(); iter.hasNext(); i++) {
-            retval[i] = iter.next();
+        for (long key : keySet) {
+            retval[i++] = key;
         }
         return retval;
     }

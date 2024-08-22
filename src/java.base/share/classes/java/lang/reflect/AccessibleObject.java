@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2023, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -71,9 +71,9 @@ import sun.security.util.SecurityConstants;
  * object corresponds to a member in an exported or open package
  * (see {@link #setAccessible(boolean)}). </p>
  *
+ * @spec jni/index.html Java Native Interface Specification
  * @jls 6.6 Access Control
  * @since 1.2
- * @revised 9
  */
 public class AccessibleObject implements AnnotatedElement {
     static {
@@ -118,7 +118,6 @@ public class AccessibleObject implements AnnotatedElement {
      *         java.lang.Class}
      * @see SecurityManager#checkPermission
      * @see ReflectPermission
-     * @revised 9
      */
     @CallerSensitive
     public static void setAccessible(AccessibleObject[] array, boolean flag) {
@@ -168,6 +167,15 @@ public class AccessibleObject implements AnnotatedElement {
      *     open module. </li>
      * </ul>
      *
+     * <p> This method may be used by <a href="{@docRoot}/../specs/jni/index.html">JNI code</a>
+     * with no caller class on the stack to enable access to a {@link Member member}
+     * of {@link Member#getDeclaringClass() declaring class} {@code D} if and only if:
+     * <ul>
+     *     <li> The member is {@code public} and {@code D} is {@code public} in
+     *     a package that the module containing {@code D} {@link
+     *     Module#isExported(String,Module) exports} unconditionally. </li>
+     * </ul>
+     *
      * <p> This method cannot be used to enable access to private members,
      * members with default (package) access, protected instance members, or
      * protected constructors when the declaring class is in a different module
@@ -193,9 +201,10 @@ public class AccessibleObject implements AnnotatedElement {
      * @param flag the new value for the {@code accessible} flag
      * @throws InaccessibleObjectException if access cannot be enabled
      * @throws SecurityException if the request is denied by the security manager
+     *
+     * @spec jni/index.html Java Native Interface Specification
      * @see #trySetAccessible
      * @see java.lang.invoke.MethodHandles#privateLookupIn
-     * @revised 9
      */
     @CallerSensitive   // overrides in Method/Field/Constructor are @CS
     public void setAccessible(boolean flag) {
@@ -246,6 +255,11 @@ public class AccessibleObject implements AnnotatedElement {
      *     }
      * }</pre>
      *
+     * <p> If this method is invoked by <a href="{@docRoot}/../specs/jni/index.html">JNI code</a>
+     * with no caller class on the stack, the {@code accessible} flag can
+     * only be set if the member and the declaring class are public, and
+     * the class is in a package that is exported unconditionally. </p>
+     *
      * <p> If there is a security manager, its {@code checkPermission} method
      * is first called with a {@code ReflectPermission("suppressAccessChecks")}
      * permission. </p>
@@ -254,6 +268,7 @@ public class AccessibleObject implements AnnotatedElement {
      *         {@code false} if access cannot be enabled.
      * @throws SecurityException if the request is denied by the security manager
      *
+     * @spec jni/index.html Java Native Interface Specification
      * @since 9
      * @see java.lang.invoke.MethodHandles#privateLookupIn
      */
@@ -304,6 +319,16 @@ public class AccessibleObject implements AnnotatedElement {
             throw new IllegalCallerException();   // should not happen
         }
 
+        if (caller == null) {
+            // No caller frame when a native thread attaches to the VM
+            // only allow access to a public accessible member
+            boolean canAccess = Reflection.verifyPublicMemberAccess(declaringClass, declaringClass.getModifiers());
+            if (!canAccess && throwExceptionIfDenied) {
+                throwInaccessibleObjectException(caller, declaringClass);
+            }
+            return canAccess;
+        }
+
         Module callerModule = caller.getModule();
         Module declaringModule = declaringClass.getModule();
 
@@ -312,12 +337,7 @@ public class AccessibleObject implements AnnotatedElement {
         if (!declaringModule.isNamed()) return true;
 
         String pn = declaringClass.getPackageName();
-        int modifiers;
-        if (this instanceof Executable) {
-            modifiers = ((Executable) this).getModifiers();
-        } else {
-            modifiers = ((Field) this).getModifiers();
-        }
+        int modifiers = ((Member)this).getModifiers();
 
         // class is public and package is exported to caller
         boolean isClassPublic = Modifier.isPublic(declaringClass.getModifiers());
@@ -341,23 +361,35 @@ public class AccessibleObject implements AnnotatedElement {
         }
 
         if (throwExceptionIfDenied) {
-            // not accessible
-            String msg = "Unable to make ";
-            if (this instanceof Field)
-                msg += "field ";
-            msg += this + " accessible: " + declaringModule + " does not \"";
-            if (isClassPublic && Modifier.isPublic(modifiers))
-                msg += "exports";
-            else
-                msg += "opens";
-            msg += " " + pn + "\" to " + callerModule;
-            InaccessibleObjectException e = new InaccessibleObjectException(msg);
-            if (printStackTraceWhenAccessFails()) {
-                e.printStackTrace(System.err);
-            }
-            throw e;
+            throwInaccessibleObjectException(caller, declaringClass);
         }
         return false;
+    }
+
+    private void throwInaccessibleObjectException(Class<?> caller, Class<?> declaringClass) {
+        boolean isClassPublic = Modifier.isPublic(declaringClass.getModifiers());
+        String pn = declaringClass.getPackageName();
+        int modifiers = ((Member)this).getModifiers();
+
+        // not accessible
+        String msg = "Unable to make ";
+        if (this instanceof Field)
+            msg += "field ";
+        msg += this + " accessible";
+        msg += caller == null ? " by JNI attached native thread with no caller frame: " : ": ";
+        msg += declaringClass.getModule() + " does not \"";
+        if (isClassPublic && Modifier.isPublic(modifiers))
+            msg += "exports";
+        else
+            msg += "opens";
+        msg += " " + pn + "\"" ;
+        if (caller != null)
+            msg += " to " + caller.getModule();
+        InaccessibleObjectException e = new InaccessibleObjectException(msg);
+        if (printStackTraceWhenAccessFails()) {
+            e.printStackTrace(System.err);
+        }
+        throw e;
     }
 
     private boolean isSubclassOf(Class<?> queryClass, Class<?> ofClass) {
@@ -389,8 +421,6 @@ public class AccessibleObject implements AnnotatedElement {
      * This method may return {@code false} on a reflected object that is
      * accessible to the caller. To test if this reflected object is accessible,
      * it should use {@link #canAccess(Object)}.
-     *
-     * @revised 9
      */
     @Deprecated(since="9")
     public boolean isAccessible() {
@@ -409,7 +439,11 @@ public class AccessibleObject implements AnnotatedElement {
      * is set to {@code true}, i.e. the checks for Java language access control
      * are suppressed, or if the caller can access the member as
      * specified in <cite>The Java Language Specification</cite>,
-     * with the variation noted in the class description. </p>
+     * with the variation noted in the class description.
+     * If this method is invoked by <a href="{@docRoot}/../specs/jni/index.html">JNI code</a>
+     * with no caller class on the stack, this method returns {@code true}
+     * if the member and the declaring class are public, and the class is in
+     * a package that is exported unconditionally. </p>
      *
      * @param obj an instance object of the declaring class of this reflected
      *            object if it is an instance method or field
@@ -426,6 +460,7 @@ public class AccessibleObject implements AnnotatedElement {
      *              declaring class} of the member.</li>
      *         </ul>
      *
+     * @spec jni/index.html Java Native Interface Specification
      * @since 9
      * @jls 6.6 Access Control
      * @see #trySetAccessible
@@ -446,7 +481,7 @@ public class AccessibleObject implements AnnotatedElement {
             }
             // if this object is an instance member, the given object
             // must be a subclass of the declaring class of this reflected object
-            if (!declaringClass.isAssignableFrom(obj.getClass())) {
+            if (!declaringClass.isInstance(obj)) {
                 throw new IllegalArgumentException("object is not an instance of "
                                                    + declaringClass.getName());
             }
@@ -645,8 +680,8 @@ public class AccessibleObject implements AnnotatedElement {
      */
     private boolean isAccessChecked(Class<?> caller, Class<?> targetClass) {
         Object cache = accessCheckCache;  // read volatile
-        if (cache instanceof Cache) {
-            return ((Cache) cache).isCacheFor(caller, targetClass);
+        if (cache instanceof Cache c) {
+            return c.isCacheFor(caller, targetClass);
         }
         return false;
     }
